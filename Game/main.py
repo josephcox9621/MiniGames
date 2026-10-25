@@ -1,57 +1,71 @@
+"""Launch Connect Four with a Pygame loop that also yields for pygbag."""
+
 import asyncio
+import platform
+import sys
+
 import pygame
 
-pygame.init()
+from games.connect_four.connect_four import ConnectFour
 
-WIDTH = 400
-HEIGHT = 600
-
-screen = pygame.display.set_mode((WIDTH, HEIGHT))
-pygame.display.set_caption("My First Pygbag Game")
-
-clock = pygame.time.Clock()
-
-blue = (50, 100, 255)
-red = (255, 70, 70)
-
-colour = blue
+GAME_WIDTH = 400
+GAME_HEIGHT = 800
+FRAMES_PER_SECOND = 60
+MILLISECONDS_PER_SECOND = 1000
 
 
-async def main():
-    global colour
+def configure_browser_input() -> None:
+    """Keep touch gestures on the pygbag canvas from scrolling the browser page.
 
-    running = True
+    Desktop Pygame has no browser canvas, so it requires no configuration.
+    Only the canvas is affected; the rest of the page keeps its normal behavior.
+    """
+    if sys.platform != "emscripten":
+        return
 
-    while running:
+    browser_window = getattr(platform, "window", None)
+    if browser_window is None:
+        return
 
-        for event in pygame.event.get():
-
-            if event.type == pygame.QUIT:
-                running = False
-
-            if event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_SPACE:
-                    colour = red if colour == blue else blue
-
-            if event.type == pygame.MOUSEBUTTONDOWN:
-                colour = red if colour == blue else blue
-
-        screen.fill((30, 30, 30))
-
-        pygame.draw.rect(
-            screen,
-            colour,
-            (150, 250, 100, 100)
-        )
-
-        pygame.display.flip()
-
-        clock.tick(60)
-
-        # Required for pygbag
-        await asyncio.sleep(0)
-
-    pygame.quit()
+    canvas_style = browser_window.canvas.style
+    canvas_style.touchAction = "none"
+    canvas_style.userSelect = "none"
 
 
-asyncio.run(main())
+async def main() -> None:
+    """Run input, animation, and rendering until the window is closed.
+
+    Yield to asyncio every frame for browser compatibility and shut down Pygame
+    after leaving the loop. Animation receives elapsed time in seconds.
+    """
+    pygame.init()
+    try:
+        screen = pygame.display.set_mode((GAME_WIDTH, GAME_HEIGHT), pygame.SCALED)
+        configure_browser_input()
+        pygame.display.set_caption("Connect Four")
+        clock = pygame.time.Clock()
+        game = ConnectFour(screen)
+        running = True
+
+        while running:
+            elapsed_ms = clock.tick(FRAMES_PER_SECOND)
+            elapsed_seconds = elapsed_ms / MILLISECONDS_PER_SECOND
+
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    running = False
+                else:
+                    game.handle_event(event)
+
+            game.update(elapsed_seconds)
+            game.draw()
+            pygame.display.flip()
+
+            # pygbag needs control returned to the browser every frame.
+            await asyncio.sleep(0)
+    finally:
+        pygame.quit()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
