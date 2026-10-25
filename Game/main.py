@@ -1,4 +1,4 @@
-"""Launch Connect Four with a Pygame loop that also yields for pygbag."""
+"""Launch the MiniGames library with a browser-compatible Pygame loop."""
 
 import asyncio
 import platform
@@ -6,7 +6,7 @@ import sys
 
 import pygame
 
-from games.connect_four.connect_four import ConnectFour
+from app.application import MiniGamesApp
 
 GAME_WIDTH = 400
 GAME_HEIGHT = 800
@@ -42,9 +42,9 @@ async def main() -> None:
     try:
         screen = pygame.display.set_mode((GAME_WIDTH, GAME_HEIGHT), pygame.SCALED)
         configure_browser_input()
-        pygame.display.set_caption("Connect Four")
+        pygame.display.set_caption("MiniGames")
         clock = pygame.time.Clock()
-        game = ConnectFour(screen)
+        app = MiniGamesApp(screen)
         running = True
 
         while running:
@@ -55,10 +55,10 @@ async def main() -> None:
                 if event.type == pygame.QUIT:
                     running = False
                 else:
-                    game.handle_event(event)
+                    app.handle_event(event)
 
-            game.update(elapsed_seconds)
-            game.draw()
+            app.update(elapsed_seconds)
+            app.draw()
             pygame.display.flip()
 
             # pygbag needs control returned to the browser every frame.

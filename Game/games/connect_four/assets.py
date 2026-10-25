@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pygame
 
-from spritesheet import SpriteSheet
+from shared.spritesheet import SpriteSheet
 
 
 PLAYER_COLORS = {1: (231, 77, 86), 2: (246, 202, 70)}

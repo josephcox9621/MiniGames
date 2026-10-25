@@ -1,0 +1,1 @@
+"""Application navigation, game registration, and menu screens."""
