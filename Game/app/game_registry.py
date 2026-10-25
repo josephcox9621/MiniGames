@@ -5,7 +5,7 @@ from typing import Callable, Protocol
 
 import pygame
 
-from games.connect_four.connect_four import ConnectFour
+from games.connect_four.session import ConnectFourSession
 
 
 class PlayableGame(Protocol):
@@ -34,5 +34,5 @@ class GameEntry:
 
 
 AVAILABLE_GAMES = (
-    GameEntry("Connect Four", "2 players", ConnectFour),
+    GameEntry("Connect Four", "1-2 players", ConnectFourSession),
 )

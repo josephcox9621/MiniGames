@@ -1,10 +1,13 @@
 """Provide a local two-player Connect Four game with replaceable pixel artwork."""
 
 from pathlib import Path
+import random
 
 import pygame
 
 from .assets import DEFAULT_SPRITE_RECTS, PLAYER_COLORS, ConnectFourAssets
+from .cpu import choose_column
+from .ranking import CpuRanking
 from .renderer import ConnectFourRenderer
 from .rules import find_winning_cells
 
@@ -26,6 +29,7 @@ class ConnectFour:
 	YELLOW_PLAYER = 2
 	PLAYER_NAMES = {RED_PLAYER: "Red", YELLOW_PLAYER: "Yellow"}
 	FALL_SPEED = 950
+	CPU_DELAY_SECONDS = 0.4
 	PLAYER_COLORS = PLAYER_COLORS
 	# Source rectangles are (x, y, width, height), measured in sheet pixels.
 	DEFAULT_SPRITE_RECTS = DEFAULT_SPRITE_RECTS
@@ -37,6 +41,8 @@ class ConnectFour:
 		*,
 		spritesheet_path: str | Path | None = None,
 		sprite_rects: dict[str, tuple[int, int, int, int]] | None = None,
+		vs_cpu: bool = False,
+		ranking: CpuRanking | None = None,
 	) -> None:
 		"""Prepare the layout, cache artwork, and start a new game.
 
@@ -46,6 +52,8 @@ class ConnectFour:
 		    spritesheet_path: Explicit path; otherwise use connect_four_spritesheet.png.
 		    sprite_rects: Asset filenames mapped to (x, y, width, height) crops.
 		        None uses DEFAULT_SPRITE_RECTS; a mapping replaces those defaults.
+		    vs_cpu: Randomly assign human and CPU colours for each new match.
+		    ranking: Shared CPU-mode progress; loads saved progress when omitted.
 
 		Raises:
 		    ValueError: The surface is too small or a sheet crop is invalid.
@@ -56,6 +64,10 @@ class ConnectFour:
 		if not pygame.font.get_init():
 			pygame.font.init()
 		self.screen = screen
+		self.vs_cpu = vs_cpu
+		self.ranking = None
+		if vs_cpu:
+			self.ranking = ranking if ranking is not None else CpuRanking()
 		self._create_layout()
 		self._load_artwork(asset_dir, spritesheet_path, sprite_rects)
 		self.renderer = ConnectFourRenderer(self)
@@ -120,10 +132,20 @@ class ConnectFour:
 		return self.assets.load(filename, size)
 
 	def reset(self) -> None:
-		"""Clear the board, results, and animation, with red ready to play first.
+		"""Start a fresh match, reassigning CPU-mode colours; red always moves first.
 
-		Cached artwork and layout are retained so restarting does not reload assets.
+		Artwork and ranking are retained. Unfinished matches do not affect rank.
 		"""
+		self.human_player = self.RED_PLAYER
+		if self.vs_cpu:
+			self.human_player = random.choice((self.RED_PLAYER, self.YELLOW_PLAYER))
+		self.cpu_player = self.YELLOW_PLAYER if self.human_player == self.RED_PLAYER else self.RED_PLAYER
+		self.player_names = dict(self.PLAYER_NAMES)
+		if self.vs_cpu:
+			self.player_names[self.human_player] = f"You ({self.PLAYER_NAMES[self.human_player]})"
+			self.player_names[self.cpu_player] = f"CPU ({self.PLAYER_NAMES[self.cpu_player]})"
+		self.rating_change: int | None = None
+		self._result_recorded = False
 		# Create independent rows so changing one cell never changes another row.
 		self.board = [[self.EMPTY] * self.COLUMNS for _ in range(self.ROWS)]
 		self.current_player = self.RED_PLAYER
@@ -131,10 +153,16 @@ class ConnectFour:
 		self.is_draw = False
 		self.winning_cells: list[tuple[int, int]] = []
 		self.selected_column = self.COLUMNS // 2
-		self.message = "Red's turn"
+		self.message = f"{self.player_names[self.current_player]}'s turn"
 		# Animation stores the destination row, column, and player; y is in pixels.
 		self.animation: tuple[int, int, int] | None = None
 		self.animation_y = 0.0
+		self._cpu_wait_seconds = 0.0
+
+	@property
+	def is_cpu_turn(self) -> bool:
+		"""Return whether the assigned CPU colour has the next move."""
+		return self.vs_cpu and self.current_player == self.cpu_player and not self.game_over
 
 	@property
 	def game_over(self) -> bool:
@@ -148,6 +176,12 @@ class ConnectFour:
 		Return False for an invalid or full column, an active animation, or game over.
 		Turn changes and result detection occur in update after the piece lands.
 		"""
+		if self.is_cpu_turn:
+			return False
+		return self._start_drop(column)
+
+	def _start_drop(self, column: int) -> bool:
+		"""Reserve a legal move and animate it for either a human or the CPU."""
 		# Lock input while a piece falls so turns cannot overlap.
 		if self.game_over or self.animation is not None:
 			return False
@@ -177,23 +211,40 @@ class ConnectFour:
 		row and column are the occupied destination cell; player is its owner (1 or 2).
 		Winning cells are retained so draw can highlight the completed line.
 		"""
+		if self.game_over:
+			return
 		cells = find_winning_cells(self.board, row, column, player)
 		if cells:
 			self.winner = player
 			self.winning_cells = cells
-			self.message = f"{self.PLAYER_NAMES[player]} wins!"
+			self.message = f"{self.player_names[player]} wins!"
+			self._record_ranked_result()
 			return
 		# With gravity, a full top row means the entire board is full.
 		# Check this after wins so a winning final move is not reported as a draw.
 		if all(self.board[0]):
 			self.is_draw = True
 			self.message = "Draw!"
+			self._record_ranked_result()
 			return
 		if player == self.RED_PLAYER:
 			self.current_player = self.YELLOW_PLAYER
 		else:
 			self.current_player = self.RED_PLAYER
-		self.message = f"{self.PLAYER_NAMES[self.current_player]}'s turn"
+		self._cpu_wait_seconds = 0.0
+		self.message = f"{self.player_names[self.current_player]}'s turn"
+
+	def _record_ranked_result(self) -> None:
+		"""Save a completed CPU result once, relative to the human's assigned colour."""
+		if self.ranking is None or self._result_recorded or not self.game_over:
+			return
+		self._result_recorded = True
+		if self.is_draw:
+			self.rating_change = self.ranking.record("draw")
+		elif self.winner == self.human_player:
+			self.rating_change = self.ranking.record("win")
+		else:
+			self.rating_change = self.ranking.record("loss")
 
 	def handle_event(self, event: pygame.event.Event) -> None:
 		"""Process keyboard, mouse, or touchscreen input.
@@ -269,10 +320,11 @@ class ConnectFour:
 	def update(self, delta_time: float) -> None:
 		"""Advance a falling piece by delta_time seconds and resolve it on landing.
 
-		Negative elapsed times are treated as zero. With no active animation this
-		method does nothing; it does not poll events or render the display.
+		Negative elapsed times are treated as zero. Between animations the CPU
+		waits briefly before making its move, without blocking the frame loop.
 		"""
 		if self.animation is None:
+			self._update_cpu(delta_time)
 			return
 		row, column, player = self.animation
 		target_y = self.board_rect.top + row * self.cell_size
@@ -283,6 +335,19 @@ class ConnectFour:
 		if self.animation_y >= target_y:
 			self.animation = None
 			self._finish_move(row, column, player)
+
+	def _update_cpu(self, delta_time: float) -> None:
+		"""Start one CPU move after a short delay; leave human turns unchanged."""
+		if not self.is_cpu_turn:
+			return
+		self._cpu_wait_seconds += max(0.0, delta_time)
+		if self._cpu_wait_seconds < self.CPU_DELAY_SECONDS:
+			return
+
+		column = choose_column(self.board, self.cpu_player, self.human_player)
+		if column is not None:
+			self.selected_column = column
+			self._start_drop(column)
 
 	def _draw_text(self, text: str, font: pygame.font.Font, center: tuple[int, int]) -> None:
 		"""Render text with font at the given pixel center on the game surface."""

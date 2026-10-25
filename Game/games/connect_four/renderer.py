@@ -53,11 +53,31 @@ class ConnectFourRenderer:
         center_x = self.screen.get_width() // 2
         self.draw_text("CONNECT FOUR", game.title_font, (center_x, 48))
         self.draw_text(game.message, game.font, (center_x, 90))
+        if game.ranking is not None:
+            self._draw_ranking()
+
+    def _draw_ranking(self) -> None:
+        """Show colour assignment, current rank, and the most recent result change."""
+        game = self.game
+        rank = game.ranking
+        if rank is None:
+            return
+
+        center_x = self.screen.get_width() // 2
+        assignment = f"You: {game.PLAYER_NAMES[game.human_player]} / CPU: {game.PLAYER_NAMES[game.cpu_player]}"
+        rating = f"{rank.tier} / {rank.rating:,}"
+        if game.rating_change is not None:
+            rating += f" ({game.rating_change:+d})"
+        self.draw_text(assignment, game.small_font, (center_x, 120))
+        self.draw_text(rating, game.small_font, (center_x, 145))
+        self.draw_text(rank.streak_label, game.small_font, (center_x, 170))
+        if rank.store.error:
+            self.draw_text(rank.store.error, game.small_font, (center_x, 193))
 
     def _draw_preview(self) -> None:
         """Show the selected piece above its column when a move is available."""
         game = self.game
-        if game.game_over or game.animation is not None:
+        if game.game_over or game.is_cpu_turn or game.animation is not None:
             return
 
         # Fade a copy so the shared sprite stays opaque during normal play.
